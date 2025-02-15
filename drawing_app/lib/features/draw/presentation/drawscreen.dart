@@ -1,4 +1,8 @@
+import 'dart:core';
+import 'dart:typed_data';
+
 import 'package:drawing_app/features/draw/models/stroke.dart';
+import 'package:drawing_app/features/draw/utils/thumbnail_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 
@@ -15,20 +19,37 @@ class _DrawscreenState extends State<Drawscreen> {
   List<Offset> _currentPoints = [];
   Color _selectedColor = Colors.black;
   double _brushSize = 4.0;
-  late Box<List<Stroke>> _drawingBox;
+  late Box<Map<String, dynamic>> _drawingBox;
+  String? _drawingName;
 
   @override
   void initState() {
-    _initializeHive();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeHive();
+    });
+
     super.initState();
   }
 
-   _initializeHive() {
-    _drawingBox = Hive.box<List<Stroke>>('drawings');
+  Future<void> _initializeHive() async {
+    _drawingBox = Hive.box<List<Stroke>>('drawings') as Box<Map<String, dynamic>>;
+
+    final name = ModalRoute.of(context)?.settings.arguments as String?;
+    if (name != null) {
+      final rawData = _drawingBox.get(name);
+      setState(() {
+        _drawingName = name;
+        _strokes = (rawData?['strokes'] as List<dynamic>?)?.cast<Stroke>() ?? [];
+      });
+    }
    }
 
    Future<void> _saveDrawing(String name) async{
-    await _drawingBox.put(name, _strokes);
+    //Generate thumbnail
+     final Uint8List thumbnail = await generateThumbnail(_strokes, 200, 200);
+    await _drawingBox.put(name,{
+        'strokes': _strokes,
+    'thumbnail': thumbnail});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Drawing $name saved!"),)
     );
@@ -56,6 +77,9 @@ class _DrawscreenState extends State<Drawscreen> {
                 onPressed: () {
                   final name = _controller.text.trim();
                   if (name.isNotEmpty) {
+                    setState(() {
+                      _drawingName = name;
+                    });
                     _saveDrawing(name);
                     Navigator.of(context).pop();
                   }
@@ -70,7 +94,6 @@ class _DrawscreenState extends State<Drawscreen> {
 
    @override
   void dispose() {
-    Hive.close();
     super.dispose();
   }
 
@@ -78,7 +101,7 @@ class _DrawscreenState extends State<Drawscreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Draw Your Dream"),
+        title: Text(_drawingName ?? "Draw Your Dream"),
       ),
       body: Column(children: [
         Expanded(child:
@@ -96,7 +119,7 @@ class _DrawscreenState extends State<Drawscreen> {
           onPanEnd: (details) {
             setState(() {
               _strokes.add(
-                Stroke(
+                Stroke.fromOffsets(
                   points: List.from(_currentPoints),
                   color: _selectedColor,
                   brushSize: _brushSize)
